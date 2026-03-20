@@ -4,21 +4,22 @@ metadata:
   name: asr-config
   namespace: default
 data:
-  # 基础设施连接信息 (请修改为你的真实 IP)
-  NATS_URL: "nats://10.0.0.27:30742"   # 注意使用 NodePort 或 ClusterIP
+  # infrastructure
+  NATS_URL: "nats://10.0.0.27:30742"
   MONGO_URI: "mongodb://10.0.0.27:30327"
   MONGO_DB: "asr_data"
   
-  # MinIO / S3 配置
+  # MinIO / S3 
   S3_ENDPOINT: "http://10.0.0.27:30091"
   S3_ACCESS_KEY: "admin"
   S3_SECRET_KEY: "password123"
   S3_BUCKET: "audio"
   
-  # ASR 配置
+  # ASR 
   LOG_SUBJECT: "asr.inference.stream"
 
 ---
+# --- gateway Deployment ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,7 +27,7 @@ metadata:
   labels:
     app: asr-gateway
 spec:
-  replicas: 1  # 生产环境建议 2+
+  replicas: 1  # advise for prod: 2+
   selector:
     matchLabels:
       app: asr-gateway
@@ -46,7 +47,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: asr-config
-          # 挂载代码目录 (开发阶段方便，生产建议打包进镜像)
+          # dir for code which is convenient for dev
           volumeMounts:
             - mountPath: /app
               name: code-volume
@@ -56,7 +57,7 @@ spec:
             path: /home/mac/FlashFineTune-ASR
             type: Directory
 ---
-# 网关的 Service (NodePort)
+# --- gateway Service ---
 apiVersion: v1
 kind: Service
 metadata:
@@ -71,6 +72,7 @@ spec:
       targetPort: 8000
       nodePort: 30081 
 ---
+# --- asr storage Deployment ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,7 +94,6 @@ spec:
         - name: storage
           image: flash-asr:1.0
           imagePullPolicy: IfNotPresent
-          # 覆盖启动命令，运行存储脚本
           command: ["python", "-m", "src.storage_worker"]
           envFrom:
             - configMapRef:
@@ -106,6 +107,7 @@ spec:
             path: /home/mac/FlashFineTune-ASR
             type: Directory
 ---
+# --- asr worker Deployment ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -113,7 +115,7 @@ metadata:
   labels:
     app: asr-worker
 spec:
-  replicas: 1 # 根据 Jetson 显存决定，Orin Nano 通常跑 1 个
+  replicas: 1
   selector:
     matchLabels:
       app: asr-worker
@@ -122,18 +124,12 @@ spec:
       labels:
         app: asr-worker
     spec:
-      nodeName: ubuntu 
-      
-      # 如果你在用标准的 k8s-device-plugin，可能需要 runtimeClassName
-      # runtimeClassName: nvidia 
-      
+      nodeName: ubuntu       
       containers:
         - name: worker
           image: faster-whisper-cuda:1.2
           imagePullPolicy: IfNotPresent
-          # 覆盖启动命令，运行推理脚本
           command: ["python", "-m", "src.asr_worker"]          
-          # 专门针对 GPU 的环境变量
           env:
             - name: ASR_DEVICE
               value: "cuda"
@@ -141,25 +137,20 @@ spec:
               value: "float16"
           envFrom:
             - configMapRef:
-                name: asr-config
-          
-          # 资源限制 (可选，帮助调度器)
+                name: asr-config      
           resources:
             limits:
-              nvidia.com/gpu: 1
-              
+              nvidia.com/gpu: 1              
           volumeMounts:
             - mountPath: /app
               name: code-volume
       volumes:
         - name: code-volume
           hostPath:
-            # 注意：这是 Jetson 节点上的路径，确保该路径存在代码！
-            # 如果 Jetson 上没有代码，你需要先 SCP 过去，或者打进镜像里
             path: /home/jetson/FlashFineTune-ASR
             type: Directory   
 ---
-# --- NEW SECTION: Web UI Deployment ---
+# --- Web UI Deployment ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -176,13 +167,11 @@ spec:
       labels:
         app: asr-web-ui
     spec:
-      # Run on Raspberry Pi to save Jetson GPU for inference
       nodeName: raspberrypi
       containers:
         - name: web-ui
           image: flash-asr:1.1
           imagePullPolicy: IfNotPresent
-          # Assuming you saved the code as src/web_ui.py
           command: ["python", "-m", "src.web_ui"]
           env:
             - name: PYTHONPATH
@@ -198,12 +187,11 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            # Ensure code exists here on the Pi
             path: /home/mac/FlashFineTune-ASR
             type: Directory
 
 ---
-# --- NEW SECTION: Web UI Service ---
+# --- Web UI Service ---
 apiVersion: v1
 kind: Service
 metadata:
@@ -216,6 +204,5 @@ spec:
     - protocol: TCP
       port: 7860
       targetPort: 7860
-      # You can access the UI at http://10.0.0.27:30082
       nodePort: 30082
             
