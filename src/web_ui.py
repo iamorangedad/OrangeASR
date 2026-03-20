@@ -43,9 +43,7 @@ def validate_and_normalize(data):
     return data.astype(np.float32)
 
 
-# --------------------
-
-
+# ---------- Client ----------
 class RealtimeClient:
     def __init__(self):
         self.ws = None
