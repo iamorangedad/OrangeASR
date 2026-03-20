@@ -11,7 +11,7 @@ import wave
 from src.config import Config
 from src.logger import setup_logger
 
-# Initialize structured logger
+
 logger = setup_logger("storage-worker")
 
 
