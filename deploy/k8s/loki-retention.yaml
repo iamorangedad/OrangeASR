@@ -1,18 +1,13 @@
 loki:
   nodeSelector: 
     device: usbssd    
-  # 1. 必须显式开启 Compactor 的 retention 功能
   config:
     compactor:
       retention_enabled: true
       working_directory: /data/loki/boltdb-shipper-compactor
       shared_store: filesystem
-    
-    # 2. 设置具体的保留时间
     limits_config:
-      retention_period: 2h  # 这里设置保留 72 小时 (3天)
-
-    # 3. 存储配置 (保持默认，但为了配合 compactor 通常需要显式声明)
+      retention_period: 2h 
     schema_config:
       configs:
         - from: 2020-10-24
@@ -22,10 +17,6 @@ loki:
           index:
             prefix: index_
             period: 24h
-
-  # 保持你之前的设置：不使用持久化卷 (保护 SD 卡)
   persistence:
     enabled: false
-
-  # 只有单节点部署才需要这个配置，解除一些限制
   isDefault: false
