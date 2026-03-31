@@ -1,140 +1,175 @@
-# FlashFineTune-ASR: Efficient Online Learning via Logit Caching
+# OrangeASR
 
-[](https://www.python.org/downloads/release/python-380/)
-[](https://opensource.org/licenses/MIT)
-[](https://pytorch.org/)
+A distributed real-time Automatic Speech Recognition (ASR) system built on a microservices architecture, designed to run on edge devices such as NVIDIA Jetson and Raspberry Pi clusters orchestrated by Kubernetes.
 
-**FlashFineTune-ASR** is a lightweight framework for **online ASR (Automatic Speech Recognition) adaptation**. It enables systems to learn from user corrections in real-time without the computational overhead of re-processing audio data.
+## Architecture
 
-By caching inference logits ($t_0$) and utilizing user feedback ($t_1$) as ground truth, this architecture **skips the secondary forward pass**, reducing computational cost by \~50-60% during the optimization phase.
+OrangeASR decouples audio ingestion, inference, storage, and the user interface into independent services that communicate via **NATS JetStream** as the message bus.
 
------
+```
+┌─────────────┐      Audio Chunks (base64)      ┌──────────────┐
+│  Web UI     │ ──────────────────────────────► │   Gateway    │
+│ (Gradio)    │ ◄── Transcription + Latency ─── │ (FastAPI/WS) │
+└─────────────┘                                 └──────┬───────┘
+                                                       │
+                                          NATS JetStream
+                                          asr.input
+                                                       │
+                                                       ▼
+                                               ┌───────────────┐
+                                               │  ASR Worker   │
+                                               │(faster-whisper│
+                                               │   CUDA/GPU)   │
+                                               └───────┬───────┘
+                                                       │
+                                          NATS JetStream
+                                          asr.output
+                                                  ┌────┴────┐
+                                                  ▼         ▼
+                                          ┌──────────┐ ┌──────────┐
+                                          │ Gateway  │ │ Storage  │
+                                          │(response)│ │ Worker   │
+                                          └──────────┘ └────┬─────┘
+                                                     ┌───────┴───────┐
+                                                     ▼               ▼
+                                              ┌───────────┐  ┌──────────┐
+                                              │  MinIO/S3 │  │ MongoDB  │
+                                              │ (Audio)   │  │(Metadata)│
+                                              └───────────┘  └──────────┘
+```
 
-## 🏗 System Architecture
+## Components
 
-The core innovation of this project is the **"Inference-Cache-Update"** loop. Instead of discarding neural network states after inference, we cache the final Logits to enable immediate, low-cost gradient calculation when feedback becomes available.
+| Service | Description | Tech Stack |
+|---------|-------------|------------|
+| **Gateway** | WebSocket endpoint that receives streaming audio from clients, buffers chunks, and publishes them to NATS. Routes transcription results back to clients. | FastAPI, uvicorn, nats-py |
+| **ASR Worker** | Consumes audio chunks from NATS, runs GPU-accelerated Whisper inference, and publishes results. | faster-whisper, PyTorch (CUDA) |
+| **Storage Worker** | Archives audio as WAV files to MinIO/S3 and stores transcription metadata in MongoDB. | boto3, pymongo, nats-py |
+| **Web UI** | Real-time microphone streaming client with live transcription display and latency metrics. | Gradio, websocket-client, scipy |
 
-![](./assets/architecture.png)
+## Infrastructure
 
-### The 4-Stage Workflow
+| Component | Purpose | Port (NodePort) |
+|-----------|---------|-----------------|
+| **NATS JetStream** | Message bus for inter-service communication | 30742 |
+| **MongoDB** | Transcription metadata storage | 30327 |
+| **MinIO/S3** | Audio file object storage | 30091 |
 
-#### 1\. Inference & Caching ($t_0$)
+## Prerequisites
 
-The system processes the initial user input.
+- **Kubernetes cluster** with at least two nodes (e.g., Raspberry Pi + NVIDIA Jetson)
+- **NVIDIA Jetson** (Orin Nano or similar, compute capability sm_87) for GPU-accelerated inference
+- **kubectl** configured to access your cluster
+- **Docker** for building container images
 
-  - **Input:** User Audio ($Audio_{t0}$).
-  - **Action:** Standard Encoder-Decoder inference.
-  - **Optimization:** Instead of discarding the computation graph, we store the output **Logits ($\mathbf{Z}_{t0}$)** in a high-speed cache (GPU/RAM).
-  - **Storage Cost:** Minimal (Shape: $[B, T, V]$).
+## Quick Start
 
-#### 2\. Feedback & Labeling ($t_1$)
-
-The user provides a correction or follow-up, which serves as the ground truth.
-
-  - **Input:** User Audio ($Audio_{t1}$).
-  - **Assumption:** The text predicted at $t_1$ is the correct label ($y_{true}$) for the intent of $t_0$.
-  - **Result:** We now have the Prediction Distribution ($\mathbf{Z}_{t0}$) and the True Label ($y_{true}$).
-
-#### 3\. Efficient Fine-tuning (The Core)
-
-We perform a backward pass **without** feeding $Audio_{t0}$ through the model again.
-
-  - **Process:** Load Cache $\mathbf{Z}_{t0}$ $\rightarrow$ Calculate Loss against $y_{true}$.
-  - **Efficiency:** Skips the Feature Extractor and Encoder entirely.
-  - **Equation:**
-    $$\mathcal{L} = \text{CrossEntropy}(\text{Softmax}(\mathbf{Z}_{t0}), y_{true})$$
-
-#### 4\. Gradient Accumulation
-
-To prevent Catastrophic Forgetting, gradients are not applied immediately.
-
-  - **Accumulation:** Gradients $\nabla \theta$ are stored in an accumulator.
-  - **Trigger:** Weights update after $N$ interactions (e.g., $N=4$).
-  - **Cleanup:** Cache is cleared after the update.
-
------
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-  * Python 3.8+
-  * PyTorch
-  * Hugging Face Transformers (optional, if using pre-trained backbones)
-
-### Installation
+### 1. Deploy Infrastructure
 
 ```bash
-git clone https://github.com/yourusername/FlashFineTune-ASR.git
-cd FlashFineTune-ASR
-pip install -r requirements.txt
+kubectl apply -f deploy/k8s/01-infra.yaml
 ```
 
------
+This deploys NATS JetStream and MongoDB into the `asr-service` namespace.
 
-## 💻 Usage Example
+### 2. Deploy Application Services
 
-Here is a pseudo-code demonstration of how the agent handles the conversational loop:
-
-```python
-from flash_finetune import ASRAgent
-
-# Initialize the agent (e.g., with N=4 gradient accumulation steps)
-agent = ASRAgent(model_name="whisper-small", accumulation_steps=4)
-
-# --- Stage 1: Initial Interaction (t0) ---
-audio_t0 = load_audio("user_request.wav")
-text_t0, cache_id = agent.infer(audio_t0, cache_logits=True)
-
-print(f"Bot: {text_t0}")
-# User thinks: "That was wrong."
-
-# --- Stage 2: User Correction (t1) ---
-# User says: "No, I meant [correction]"
-audio_t1 = load_audio("user_correction.wav")
-text_t1 = agent.infer(audio_t1, cache_logits=False)
-
-# --- Stage 3: Instant Optimization ---
-# We use text_t1 as the Ground Truth for the audio_t0
-loss = agent.compute_loss_from_cache(
-    cache_id=cache_id, 
-    ground_truth_text=text_t1
-)
-
-# Backward pass is triggered internally, skipping the encoder forward pass
-print(f"Loss computed: {loss.item()}")
-
-# --- Stage 4: Update ---
-# If accumulation threshold is met, optimizer.step() is called automatically
-agent.step_if_ready()
+```bash
+kubectl apply -f deploy/k8s/02-apps.yaml
 ```
 
------
+This deploys the Gateway, ASR Worker, Storage Worker, and Web UI.
 
-## ⚙️ Configuration
+### 3. Access the Web UI
 
-You can tune the behavior of the online learning in `config.yaml`:
+Open your browser to:
 
-```yaml
-training:
-  learning_rate: 1e-5
-  accumulation_steps: 4  # Number of dialogues before weight update
-  max_cache_size: 100    # Max number of logit tensors to keep in VRAM
-  freeze_encoder: True   # If True, only updates the Adapter/Head
+```
+http://<your-node-ip>:30082
 ```
 
-## 📊 Performance Benefits
+### 4. Local Development (without K8s)
 
-| Metric | Standard Online Learning | FlashFineTune (Ours) |
-| :--- | :--- | :--- |
-| **VRAM Usage** | High (Retains full graph) | **Low** (Stores only Logits) |
-| **Compute Cost** | 2x Forward Pass | **1x Forward Pass** |
-| **Latency** | High | **Near Zero** (for update step) |
+```bash
+pip install -r deploy/requirements.txt
 
-## 🤝 Contributing
+# Start the Gateway
+python -m src.gateway
 
-Contributions are welcome\! Please read [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+# Start the ASR Worker
+python -m src.asr_worker
 
-## 📄 License
+# Start the Storage Worker
+python -m src.storage_worker
 
-This project is licensed under the MIT License - see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+# Start the Web UI
+python -m src.web_ui
+```
+
+## Configuration
+
+All services are configured via environment variables or the `src/config.py` module:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WS_URL` | `ws://10.0.0.27:30081/ws/realtime` | WebSocket endpoint for clients |
+| `NATS_URL` | `nats://10.0.0.27:30742` | NATS server URL |
+| `MONGO_URI` | `mongodb://10.0.0.27:30327` | MongoDB connection string |
+| `MONGO_DB` | `asr_data` | MongoDB database name |
+| `S3_ENDPOINT` | `http://10.0.0.27:30091` | MinIO/S3 endpoint |
+| `S3_ACCESS_KEY` | `admin` | S3 access key |
+| `S3_SECRET_KEY` | `password123` | S3 secret key |
+| `S3_BUCKET` | `audio` | S3 bucket name |
+| `ASR_DEVICE` | `cuda` | Device for Whisper inference (`cuda` or `cpu`) |
+| `ASR_COMPUTE_TYPE` | `float16` | Compute precision for inference |
+
+## NATS Subjects
+
+| Subject | Direction | Description |
+|---------|-----------|-------------|
+| `asr.input` | Gateway → ASR Worker | Base64-encoded audio chunks |
+| `asr.output` | ASR Worker → Gateway & Storage | Transcription results with metadata |
+
+## Project Structure
+
+```
+OrangeASR/
+├── src/
+│   ├── __init__.py
+│   ├── config.py           # Shared configuration
+│   ├── gateway.py          # WebSocket + NATS gateway
+│   ├── asr_worker.py       # Whisper inference worker
+│   ├── storage_worker.py   # MinIO + MongoDB archiver
+│   ├── web_ui.py           # Gradio streaming UI
+│   └── logger.py           # JSON formatter for Loki/Grafana
+├── deploy/
+│   ├── Dockerfile          # Base container image
+│   ├── requirements.txt    # Python dependencies
+│   └── k8s/
+│       ├── 01-infra.yaml   # NATS + MongoDB deployment
+│       ├── 02-apps.yaml    # Application services deployment
+│       └── loki-retention.yaml
+├── tests/
+│   └── src/
+│       ├── test_transcribe.py
+│       ├── test_nats_core.py
+│       ├── test_mongo_connectivity.py
+│       ├── test_minio_s3.py
+│       └── test_auto_data_collection.py
+├── assets/
+│   └── architecture.png
+└── setup.py                # CUDA extension build (Jetson)
+```
+
+## Observability
+
+Logs are emitted in JSON format, compatible with **Loki** and **Grafana** for centralized log aggregation. Each log entry includes:
+
+- `service_name` — originating service
+- `session_id` — client session identifier
+- `req_id` — per-request unique identifier
+- `latency` — inference latency in seconds
+
+## License
+
+This project is provided as-is for educational and development purposes.
