@@ -15,8 +15,12 @@ data:
   S3_SECRET_KEY: "password123"
   S3_BUCKET: "audio"
   
-  # ASR 
-  LOG_SUBJECT: "asr.inference.stream"
+  # Refiner (LLM-based ASR correction)
+  OLLAMA_BASE_URL: "http://10.0.0.55:11434"
+  OLLAMA_MODEL: "qwen3:4b"
+  REFINE_BATCH_SIZE: "3"
+  REFINE_BUFFER_TTL: "10"
+  REFINE_TIMEOUT: "30"
 
 ---
 # --- gateway Deployment ---
@@ -149,6 +153,42 @@ spec:
           hostPath:
             path: /home/jetson/FlashFineTune-ASR
             type: Directory   
+---
+# --- Refiner Worker Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asr-refiner
+  labels:
+    app: asr-refiner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: asr-refiner
+  template:
+    metadata:
+      labels:
+        app: asr-refiner
+    spec:
+      nodeName: raspberrypi
+      containers:
+        - name: refiner
+          image: flash-asr:1.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "src.refiner_worker"]
+          envFrom:
+            - configMapRef:
+                name: asr-config
+          volumeMounts:
+            - mountPath: /app
+              name: code-volume
+      volumes:
+        - name: code-volume
+          hostPath:
+            path: /home/mac/FlashFineTune-ASR
+            type: Directory
+
 ---
 # --- Web UI Deployment ---
 apiVersion: apps/v1
