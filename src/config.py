@@ -34,3 +34,10 @@ class Config:
     S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "admin")
     S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "password123")
     S3_BUCKET = "audio"
+
+    # --- Refiner Worker (LLM-based ASR correction) ---
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://10.0.0.55:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    REFINE_BATCH_SIZE = int(os.getenv("REFINE_BATCH_SIZE", "3"))
+    REFINE_BUFFER_TTL = int(os.getenv("REFINE_BUFFER_TTL", "10"))
+    REFINE_TIMEOUT = int(os.getenv("REFINE_TIMEOUT", "30"))
