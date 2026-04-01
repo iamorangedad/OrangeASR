@@ -24,18 +24,18 @@ OrangeASR decouples audio ingestion, inference, storage, and the user interface 
                                                        │
                                           NATS JetStream
                                           asr.output
-                                                  ┌────┴────┐
-                                                  ▼         ▼
-                                          ┌──────────┐ ┌──────────┐
-                                          │ Gateway  │ │ Storage  │
-                                          │(response)│ │ Worker   │
-                                          └──────────┘ └────┬─────┘
-                                                     ┌───────┴───────┐
-                                                     ▼               ▼
-                                              ┌───────────┐  ┌──────────┐
-                                              │  MinIO/S3 │  │ MongoDB  │
-                                              │ (Audio)   │  │(Metadata)│
-                                              └───────────┘  └──────────┘
+                                               ┌────┬──┴────┬────────┐
+                                               ▼    ▼       ▼        ▼
+                                          ┌──────────┐ ┌──────────┐ ┌───────────┐
+                                          │ Gateway  │ │ Storage  │ │  Refiner  │
+                                          │(response)│ │ Worker   │ │  Worker   │
+                                          └──────────┘ └────┬─────┘ └─────┬─────┘
+                                                     ┌───────┴───────┐     │
+                                                     ▼               ▼     ▼
+                                              ┌───────────┐  ┌──────────┐ ┌──────────┐
+                                              │  MinIO/S3 │  │ MongoDB  │ │ MongoDB  │
+                                              │ (Audio)   │  │(Metadata)│ │(refined) │
+                                              └───────────┘  └──────────┘ └──────────┘
 ```
 
 ## Components
@@ -45,6 +45,7 @@ OrangeASR decouples audio ingestion, inference, storage, and the user interface 
 | **Gateway** | WebSocket endpoint that receives streaming audio from clients, buffers chunks, and publishes them to NATS. Routes transcription results back to clients. | FastAPI, uvicorn, nats-py |
 | **ASR Worker** | Consumes audio chunks from NATS, runs GPU-accelerated Whisper inference, and publishes results. | faster-whisper, PyTorch (CUDA) |
 | **Storage Worker** | Archives audio as WAV files to MinIO/S3 and stores transcription metadata in MongoDB. | boto3, pymongo, nats-py |
+| **Refiner Worker** | Buffers transcription segments by session, calls Ollama LLM to detect self-corrections, and stores `(original_text, corrected_text)` pairs for fine-tuning. | requests, pymongo, nats-py |
 | **Web UI** | Real-time microphone streaming client with live transcription display and latency metrics. | Gradio, websocket-client, scipy |
 
 ## Infrastructure
@@ -102,6 +103,9 @@ python -m src.asr_worker
 # Start the Storage Worker
 python -m src.storage_worker
 
+# Start the Refiner Worker (requires Ollama server)
+python -m src.refiner_worker
+
 # Start the Web UI
 python -m src.web_ui
 ```
@@ -122,13 +126,18 @@ All services are configured via environment variables or the `src/config.py` mod
 | `S3_BUCKET` | `audio` | S3 bucket name |
 | `ASR_DEVICE` | `cuda` | Device for Whisper inference (`cuda` or `cpu`) |
 | `ASR_COMPUTE_TYPE` | `float16` | Compute precision for inference |
+| `OLLAMA_BASE_URL` | `http://10.0.0.55:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `qwen3:4b` | LLM model for ASR correction |
+| `REFINE_BATCH_SIZE` | `3` | Min segments per session before refinement |
+| `REFINE_BUFFER_TTL` | `10` | Seconds of silence before triggering refinement |
+| `REFINE_TIMEOUT` | `30` | Timeout for Ollama API calls (seconds) |
 
 ## NATS Subjects
 
 | Subject | Direction | Description |
 |---------|-----------|-------------|
 | `asr.input` | Gateway → ASR Worker | Base64-encoded audio chunks |
-| `asr.output` | ASR Worker → Gateway & Storage | Transcription results with metadata |
+| `asr.output` | ASR Worker → Gateway, Storage & Refiner | Transcription results with metadata |
 
 ## Project Structure
 
@@ -140,6 +149,8 @@ OrangeASR/
 │   ├── gateway.py          # WebSocket + NATS gateway
 │   ├── asr_worker.py       # Whisper inference worker
 │   ├── storage_worker.py   # MinIO + MongoDB archiver
+│   ├── refiner_worker.py   # LLM-based ASR correction worker
+│   ├── refiner.py          # Ollama LLM client for refinement
 │   ├── web_ui.py           # Gradio streaming UI
 │   └── logger.py           # JSON formatter for Loki/Grafana
 ├── deploy/
@@ -152,10 +163,10 @@ OrangeASR/
 ├── tests/
 │   └── src/
 │       ├── test_transcribe.py
+│       ├── test_refiner.py
 │       ├── test_nats_core.py
 │       ├── test_mongo_connectivity.py
-│       ├── test_minio_s3.py
-│       └── test_auto_data_collection.py
+│       └── test_minio_s3.py
 ├── assets/
 │   └── architecture.png
 └── setup.py                # CUDA extension build (Jetson)
