@@ -30,8 +30,8 @@ OrangeASR decouples audio ingestion, inference, storage, and the user interface 
                                           │ Gateway  │ │ Storage  │ │  Refiner  │
                                           │(response)│ │ Worker   │ │  Worker   │
                                           └──────────┘ └────┬─────┘ └─────┬─────┘
-                                                     ┌───────┴───────┐     │
-                                                     ▼               ▼     ▼
+                                                     ┌──────┴───────┐     │
+                                                     ▼              ▼     ▼
                                               ┌───────────┐  ┌──────────┐ ┌──────────┐
                                               │  MinIO/S3 │  │ MongoDB  │ │ MongoDB  │
                                               │ (Audio)   │  │(Metadata)│ │(refined) │
