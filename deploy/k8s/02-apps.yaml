@@ -58,7 +58,7 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            path: /home/mac/FlashFineTune-ASR
+            path: /home/mac/OrangeASR
             type: Directory
 ---
 # --- gateway Service ---
@@ -108,7 +108,7 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            path: /home/mac/FlashFineTune-ASR
+            path: /home/mac/OrangeASR
             type: Directory
 ---
 # --- asr worker Deployment ---
@@ -151,7 +151,7 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            path: /home/jetson/FlashFineTune-ASR
+            path: /home/jetson/OrangeASR
             type: Directory   
 ---
 # --- Refiner Worker Deployment ---
@@ -186,7 +186,7 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            path: /home/mac/FlashFineTune-ASR
+            path: /home/mac/OrangeASR
             type: Directory
 
 ---
@@ -227,7 +227,7 @@ spec:
       volumes:
         - name: code-volume
           hostPath:
-            path: /home/mac/FlashFineTune-ASR
+            path: /home/mac/OrangeASR
             type: Directory
 
 ---
