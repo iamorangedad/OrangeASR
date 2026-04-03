@@ -43,7 +43,7 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: gateway
-          image: flash-asr:1.0
+          image: flash-asr:1.2
           imagePullPolicy: IfNotPresent
           command: ["uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
           env:
