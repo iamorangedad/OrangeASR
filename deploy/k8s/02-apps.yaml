@@ -99,7 +99,7 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: storage
-          image: flash-asr:1.0
+          image: flash-asr:1.1
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "src.storage_worker"]
           env:
@@ -182,7 +182,7 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: refiner
-          image: flash-asr:1.0
+          image: flash-asr:1.1
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "src.refiner_worker"]
           env:
