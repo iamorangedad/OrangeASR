@@ -8,3 +8,4 @@ faster-whisper
 scipy
 websocket-client
 gradio
+requests

@@ -3,7 +3,7 @@ import json
 import base64
 import time
 import uuid
-import wave  # <--- Added
+import wave
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 import nats
@@ -61,7 +61,6 @@ manager = ConnectionManager()
 server_state = {"nc": None, "js": None}
 
 
-# --- NATS Handler ---
 async def handle_asr_result(msg):
     try:
         data = json.loads(msg.data.decode())

@@ -11,10 +11,10 @@ metadata:
   namespace: asr-service
 data:
   nats.conf: |
-    # 核心配置：允许 10MB 的大包 (音频数据)
+    # Core configuration: allow large packets up to 10MB (audio data)
     max_payload: 10MB
     
-    # 开启 JetStream 并指定存储路径
+    # Enable JetStream and specify storage path
     jetstream {
         store_dir: "/data"
     }
@@ -99,7 +99,7 @@ spec:
       containers:
       - name: mongo
         image: mongo:4.4.18
-        # 限制内存，防止吃光树莓派内存
+        # Limit memory to prevent exhausting Raspberry Pi RAM
         args: ["--wiredTigerCacheSizeGB", "0.5"]
         ports:
         - containerPort: 27017

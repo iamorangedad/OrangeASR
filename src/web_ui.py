@@ -11,7 +11,7 @@ from scipy import signal
 from scipy.signal import resample_poly
 import os
 import traceback
-from config import Config
+from src.config import Config
 
 WS_URL = getattr(Config, "WS_URL", "ws://10.0.0.27:30081/ws/realtime")
 
@@ -43,9 +43,7 @@ def validate_and_normalize(data):
     return data.astype(np.float32)
 
 
-# --------------------
-
-
+# ---------- Client ----------
 class RealtimeClient:
     def __init__(self):
         self.ws = None
