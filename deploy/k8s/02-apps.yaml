@@ -46,6 +46,9 @@ spec:
           image: flash-asr:1.0
           imagePullPolicy: IfNotPresent
           command: ["uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+          env:
+            - name: PYTHONPATH
+              value: "/app"
           ports:
             - containerPort: 8000
           envFrom:
@@ -99,6 +102,9 @@ spec:
           image: flash-asr:1.0
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "src.storage_worker"]
+          env:
+            - name: PYTHONPATH
+              value: "/app"
           envFrom:
             - configMapRef:
                 name: asr-config
@@ -135,6 +141,8 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "src.asr_worker"]          
           env:
+            - name: PYTHONPATH
+              value: "/app"
             - name: ASR_DEVICE
               value: "cuda"
             - name: ASR_COMPUTE_TYPE
@@ -177,6 +185,9 @@ spec:
           image: flash-asr:1.0
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "src.refiner_worker"]
+          env:
+            - name: PYTHONPATH
+              value: "/app"
           envFrom:
             - configMapRef:
                 name: asr-config
@@ -215,7 +226,7 @@ spec:
           command: ["python", "-m", "src.web_ui"]
           env:
             - name: PYTHONPATH
-              value: "/app/src"          
+              value: "/app"          
           ports:
             - containerPort: 7860
           envFrom:
