@@ -6,21 +6,21 @@ import math
 from faster_whisper import WhisperModel
 
 
-# --- 1. 工具函数：生成一个简单的测试音频 ---
+# --- 1. Utility: Generate a simple test audio ---
 def create_dummy_wav(filename, duration_sec=2):
     """
-    生成一个包含简单正弦波（哔哔声）的 WAV 文件。
-    这样我们就不用依赖外部下载的音频文件了。
+    Generate a WAV file containing a simple sine wave (beep).
+    This way we don't need to rely on externally downloaded audio files.
     """
     sample_rate = 16000
     n_samples = int(sample_rate * duration_sec)
 
     with wave.open(filename, "w") as obj:
-        obj.setnchannels(1)  # 单声道
-        obj.setsampwidth(2)  # 2字节 (16 bit)
+        obj.setnchannels(1)  # mono
+        obj.setsampwidth(2)  # 2 bytes (16 bit)
         obj.setframerate(sample_rate)
 
-        # 生成 440Hz 的正弦波
+        # Generate 440Hz sine wave
         data = []
         for i in range(n_samples):
             value = int(
@@ -33,16 +33,16 @@ def create_dummy_wav(filename, duration_sec=2):
     return filename
 
 
-# --- 2. Pytest Fixtures (前置准备) ---
+# --- 2. Pytest Fixtures (Setup) ---
 
 
 @pytest.fixture(scope="module")
 def audio_file():
     """
-    使用真实的音频文件进行测试，而不是人工生成的正弦波。
-    Whisper模型无法识别非语音信号（如纯音调）。
+    Use a real audio file for testing instead of artificially generated sine waves.
+    The Whisper model cannot recognize non-speech signals (such as pure tones).
     """
-    # 使用项目中的真实音频文件
+    # Use a real audio file from the project
     filename = "tests/california.mp3"
     if not os.path.exists(filename):
         pytest.skip(f"Test audio file not found: {filename}")
@@ -53,51 +53,54 @@ def audio_file():
 @pytest.fixture(scope="module")
 def whisper_model():
     """
-    加载模型。
-    scope="module" 保证整个测试文件只加载一次模型，避免每个测试用例都重新加载导致变慢。
+    Load the model.
+    scope="module" ensures the model is loaded only once for the entire test file,
+    avoiding reloading for each test case which would be slow.
 
-    注意：在 CI/CD 或测试环境中，建议使用 'tiny' 模型以节省时间和内存。
+    Note: In CI/CD or test environments, it is recommended to use the 'tiny' model
+    to save time and memory.
     """
-    # 如果你在 Jetson 上，可以改为 device="cuda", compute_type="float16"
-    # 为了保证单元测试的通用性，这里默认使用 cpu 和 int8
+    # If running on Jetson, you can change to device="cuda", compute_type="float16"
+    # For unit test portability, we default to cpu and int8
     model_size = "tiny"
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     return model
 
 
-# --- 3. 测试用例 ---
+# --- 3. Test Cases ---
 
 
 def test_model_loading(whisper_model):
     """
-    测试 0: 验证模型是否成功加载
+    Test 0: Verify the model loads successfully
     """
     assert whisper_model is not None
 
 
 def test_transcribe_functionality(whisper_model, audio_file):
     """
-    测试 1: 核心功能测试 - 确保能跑通 transcribe 流程
+    Test 1: Core functionality test - ensure the transcribe pipeline works
     """
-    # 运行识别
-    # beam_size=1 加快测试速度
+    # Run recognition
+    # beam_size=1 to speed up testing
     segments, info = whisper_model.transcribe(audio_file, beam_size=1)
 
-    # ⚠️ 重要：segments 是一个生成器 (generator)。
-    # 只有当你遍历它时，实际的推理才会执行！
+    # Important: segments is a generator.
+    # Actual inference only happens when you iterate over it!
     segments_list = list(segments)
 
-    # --- 断言 (验证结果) ---
+    # --- Assertions (verify results) ---
 
-    # 1. 验证是否检测到了音频时长 (只要 > 0 即可)
+    # 1. Verify audio duration was detected (just needs to be > 0)
     print(f"\n[Info] Detected duration: {info.duration}s")
     assert info.duration > 0
 
-    # 2. 验证是否有输出段落
-    # 虽然是哔哔声，模型可能会识别成空白或者幻觉文本，但列表不应报错
+    # 2. Verify there are output segments
+    # Even with a beep sound, the model might produce blank or hallucinated text,
+    # but the list should not raise an error
     assert isinstance(segments_list, list)
 
-    # 3. 打印识别结果供调试查看
+    # 3. Print recognition results for debugging
     text = "".join([s.text for s in segments_list]).strip()
     print(f"[Result] Transcribed text: '{text}'")
 
@@ -105,7 +108,7 @@ def test_transcribe_functionality(whisper_model, audio_file):
 @pytest.mark.parametrize("beam_size", [1, 5])
 def test_transcribe_params(whisper_model, audio_file, beam_size):
     """
-    测试 2: 参数化测试 - 验证不同参数下不会报错
+    Test 2: Parameterized test - verify no errors occur with different parameters
     """
     segments, _ = whisper_model.transcribe(audio_file, beam_size=beam_size)
     results = list(segments)
