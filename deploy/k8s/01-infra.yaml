@@ -72,10 +72,10 @@ metadata:
   name: nats
   namespace: asr-service
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
   - port: 4222
-    nodePort: 30742
+    targetPort: 4222
   selector:
     app: nats
 ---
