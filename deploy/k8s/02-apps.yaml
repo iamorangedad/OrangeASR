@@ -5,12 +5,12 @@ metadata:
   namespace: default
 data:
   # infrastructure
-  NATS_URL: "nats://10.0.0.27:30742"
-  MONGO_URI: "mongodb://10.0.0.27:30327"
+  NATS_URL: "nats://nats.asr-service.svc.cluster.local:4222"
+  MONGO_URI: "mongodb://mongo.asr-service.svc.cluster.local:27017"
   MONGO_DB: "asr_data"
   
   # MinIO / S3 
-  S3_ENDPOINT: "http://10.0.0.27:30091"
+  S3_ENDPOINT: "http://minio-service.asr-service.svc.cluster.local:9000"
   S3_ACCESS_KEY: "admin"
   S3_SECRET_KEY: "password123"
   S3_BUCKET: "audio"
