@@ -9,3 +9,4 @@ scipy
 websocket-client
 gradio
 requests
+webrtcvad

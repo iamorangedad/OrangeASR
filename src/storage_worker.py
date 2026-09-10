@@ -68,10 +68,32 @@ class StorageWorker:
 
     async def process_msg(self, msg):
         """
-        Handle messages from 'asr.output'
+        Handle messages from 'asr.output' (compat: supports both base64 json and binary headers+data)
         """
         try:
-            data = json.loads(msg.data.decode())
+            headers = getattr(msg, "headers", None) or {}
+            try:
+                data = json.loads(msg.data.decode())
+            except Exception:
+                data = {}
+                if headers.get("req_id"):
+                    data = {
+                        "req_id": headers.get("req_id"),
+                        "session_id": headers.get("session_id", "default_session"),
+                        "text": headers.get("text", ""),
+                        "timestamp": float(headers.get("timestamp", time.time())),
+                    }
+                    pcm = msg.data or b""
+                    if pcm:
+                        data["audio_b64"] = base64.b64encode(pcm).decode()
+            if not data.get("req_id") and headers.get("req_id"):
+                data["req_id"] = headers.get("req_id")
+                data["session_id"] = headers.get("session_id", data.get("session_id", "default_session"))
+            if not data.get("audio_b64") and headers.get("req_id") and msg.data and len(msg.data) > 100:
+                try:
+                    json.loads(msg.data.decode())
+                except Exception:
+                    data["audio_b64"] = base64.b64encode(msg.data).decode()
 
             req_id = data.get("req_id", "unknown_id")
             session_id = data.get("session_id", "default_session")

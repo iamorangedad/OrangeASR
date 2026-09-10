@@ -41,3 +41,21 @@ class Config:
     REFINE_BATCH_SIZE = int(os.getenv("REFINE_BATCH_SIZE", "3"))
     REFINE_BUFFER_TTL = int(os.getenv("REFINE_BUFFER_TTL", "10"))
     REFINE_TIMEOUT = int(os.getenv("REFINE_TIMEOUT", "30"))
+
+    # --- ASR Inference ---
+    ASR_DEVICE = os.getenv("ASR_DEVICE", "cuda")
+    ASR_COMPUTE_TYPE = os.getenv("ASR_COMPUTE_TYPE", "int8_float16")
+    ASR_MAX_CONCURRENCY = int(os.getenv("ASR_MAX_CONCURRENCY", "2"))
+    ASR_BATCH_WINDOW_MS = int(os.getenv("ASR_BATCH_WINDOW_MS", "80"))
+    ASR_WARMUP = os.getenv("ASR_WARMUP", "1") not in ("0", "false", "False")
+    ASR_INFERENCE_TIMEOUT = float(os.getenv("ASR_INFERENCE_TIMEOUT", "5"))
+
+    # --- Gateway Chunking & Backpressure ---
+    USE_BINARY_PAYLOAD = os.getenv("USE_BINARY_PAYLOAD", "1") not in ("0", "false", "False")
+    VAD_DISABLE = os.getenv("VAD_DISABLE", "0") in ("1", "true", "True", "yes")
+    GATEWAY_MIN_CHUNK_SEC = float(os.getenv("GATEWAY_MIN_CHUNK_SEC", "0.8"))
+    GATEWAY_MAX_CHUNK_SEC = float(os.getenv("GATEWAY_MAX_CHUNK_SEC", "1.5"))
+    GATEWAY_OVERLAP_SEC = float(os.getenv("GATEWAY_OVERLAP_SEC", "0.3"))
+    GATEWAY_VAD_AGGRESSIVENESS = int(os.getenv("GATEWAY_VAD_AGGRESSIVENESS", "2"))
+    GATEWAY_MAX_PENDING = int(os.getenv("GATEWAY_MAX_PENDING", "20"))
+    GATEWAY_RATE_LIMIT_RPS = float(os.getenv("GATEWAY_RATE_LIMIT_RPS", "10"))

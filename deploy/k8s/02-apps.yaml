@@ -21,6 +21,18 @@ data:
   REFINE_BATCH_SIZE: "3"
   REFINE_BUFFER_TTL: "10"
   REFINE_TIMEOUT: "30"
+  # Perf P0
+  ASR_COMPUTE_TYPE: "int8_float16"
+  USE_BINARY_PAYLOAD: "1"
+  VAD_DISABLE: "0"
+  GATEWAY_MIN_CHUNK_SEC: "0.8"
+  GATEWAY_MAX_CHUNK_SEC: "1.5"
+  GATEWAY_OVERLAP_SEC: "0.3"
+  GATEWAY_MAX_PENDING: "20"
+  GATEWAY_RATE_LIMIT_RPS: "10"
+  ASR_MAX_CONCURRENCY: "2"
+  ASR_BATCH_WINDOW_MS: "80"
+  ASR_WARMUP: "1"
 
 ---
 # --- gateway Deployment ---
@@ -146,7 +158,7 @@ spec:
             - name: ASR_DEVICE
               value: "cuda"
             - name: ASR_COMPUTE_TYPE
-              value: "float16"
+              value: "int8_float16"
           envFrom:
             - configMapRef:
                 name: asr-config      
