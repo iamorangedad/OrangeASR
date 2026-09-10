@@ -12,6 +12,7 @@ except ImportError:
     WhisperModel = None
 from src.logger import setup_logger
 from src.config import Config
+from src import metrics
 
 DEVICE = os.getenv("ASR_DEVICE", Config.ASR_DEVICE)
 COMPUTE_TYPE = os.getenv("ASR_COMPUTE_TYPE", Config.ASR_COMPUTE_TYPE)
@@ -31,11 +32,19 @@ class ASRWorker:
     def load_model(self):
         if WhisperModel is None:
             print("⚠️ faster-whisper not installed, skip model load (test mode)")
+            try:
+                metrics.set_health(model_loaded=False)
+            except Exception:
+                pass
             return
         print(f"⏳ [ASR Worker] Loading Whisper Model ({DEVICE}/{COMPUTE_TYPE})...")
         try:
             self.model = WhisperModel("tiny", device=DEVICE, compute_type=COMPUTE_TYPE)
             print("✅ [ASR Worker] Model Loaded successfully!")
+            try:
+                metrics.set_health(model_loaded=True)
+            except Exception:
+                pass
             if Config.ASR_WARMUP:
                 try:
                     print("🔥 Warmup inference with 1s silence...")
@@ -46,6 +55,10 @@ class ASRWorker:
                     print(f"⚠️ Warmup failed: {e}")
         except Exception as e:
             print(f"❌ [ASR Worker] CRITICAL: Model load failed - {e}")
+            try:
+                metrics.set_health(model_loaded=False)
+            except Exception:
+                pass
             exit(1)
 
     def run_inference(self, audio_np, previous_text="", req_id="N/A"):
@@ -89,14 +102,23 @@ class ASRWorker:
     async def _infer_with_sem(self, audio_float32, previous_text, req_id):
         async with self.sem:
             loop = asyncio.get_running_loop()
+            t0 = time.time()
             try:
                 new_text = await asyncio.wait_for(
                     loop.run_in_executor(None, self.run_inference, audio_float32, previous_text, req_id),
                     timeout=Config.ASR_INFERENCE_TIMEOUT,
                 )
+                try:
+                    metrics.worker_inference_seconds.labels(compute_type=COMPUTE_TYPE).observe(time.time() - t0)
+                except Exception:
+                    pass
                 return new_text
             except asyncio.TimeoutError:
                 logger.error(f"⏰ Inference timeout 5s", extra={"req_id": req_id})
+                try:
+                    metrics.worker_inference_seconds.labels(compute_type=COMPUTE_TYPE).observe(time.time() - t0)
+                except Exception:
+                    pass
                 return ""
             except Exception as e:
                 logger.error(f"Inference Error: {e}", extra={"req_id": req_id})
@@ -230,12 +252,28 @@ class ASRWorker:
                 pass
 
     async def start(self):
+        try:
+            metrics.start_metrics_server(8081)
+        except Exception:
+            pass
         self.load_model()
         print(f"🔌 Connecting to NATS: {Config.NATS_URL}")
         try:
             self.nc = await nats.connect(Config.NATS_URL)
             self.js = self.nc.jetstream()
+            try:
+                metrics.set_health(nats_ok=True)
+            except Exception:
+                pass
             asyncio.create_task(self.batch_loop())
+            async def _queue_reporter():
+                while True:
+                    try:
+                        metrics.worker_queue_depth.labels(worker="asr").set(self.queue.qsize())
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+            asyncio.create_task(_queue_reporter())
             await self.js.subscribe(
                 "asr.input", queue="asr_workers", cb=self.process_msg, manual_ack=True
             )

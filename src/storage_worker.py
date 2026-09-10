@@ -22,6 +22,7 @@ from io import BytesIO
 import wave
 from src.config import Config
 from src.logger import setup_logger
+from src import metrics
 
 logger = setup_logger("storage-worker")
 
@@ -108,26 +109,39 @@ class StorageWorker:
             return wav_buffer.getvalue()
 
     async def _upload_s3(self, wav_bytes, s3_key):
-        if HAS_AIOBOTO and self.s3_session is not None:
-            try:
-                async with self.s3_session.client(
-                    "s3",
-                    endpoint_url=Config.S3_ENDPOINT,
-                    aws_access_key_id=Config.S3_ACCESS_KEY,
-                    aws_secret_access_key=Config.S3_SECRET_KEY,
-                ) as s3:
-                    await s3.upload_fileobj(BytesIO(wav_bytes), Config.S3_BUCKET, s3_key, ExtraArgs={"ContentType": "audio/wav"})
-                return True
-            except Exception as e:
-                logger.warning(f"aioboto3 upload failed, fallback to sync: {e}")
-        loop = asyncio.get_running_loop()
-        def _sync_upload():
-            bio = BytesIO(wav_bytes)
-            self.s3.upload_fileobj(bio, Config.S3_BUCKET, s3_key, ExtraArgs={"ContentType": "audio/wav"})
+        t0 = time.time()
         try:
+            if HAS_AIOBOTO and self.s3_session is not None:
+                try:
+                    async with self.s3_session.client(
+                        "s3",
+                        endpoint_url=Config.S3_ENDPOINT,
+                        aws_access_key_id=Config.S3_ACCESS_KEY,
+                        aws_secret_access_key=Config.S3_SECRET_KEY,
+                    ) as s3:
+                        await s3.upload_fileobj(BytesIO(wav_bytes), Config.S3_BUCKET, s3_key, ExtraArgs={"ContentType": "audio/wav"})
+                    try:
+                        metrics.s3_upload_seconds.observe(time.time() - t0)
+                    except Exception:
+                        pass
+                    return True
+                except Exception as e:
+                    logger.warning(f"aioboto3 upload failed, fallback to sync: {e}")
+            loop = asyncio.get_running_loop()
+            def _sync_upload():
+                bio = BytesIO(wav_bytes)
+                self.s3.upload_fileobj(bio, Config.S3_BUCKET, s3_key, ExtraArgs={"ContentType": "audio/wav"})
             await loop.run_in_executor(None, _sync_upload)
+            try:
+                metrics.s3_upload_seconds.observe(time.time() - t0)
+            except Exception:
+                pass
             return True
         except Exception as e:
+            try:
+                metrics.s3_upload_seconds.observe(time.time() - t0)
+            except Exception:
+                pass
             raise e
 
     async def _flush_buffer(self):
@@ -239,11 +253,26 @@ class StorageWorker:
 
     async def start(self):
         self.init_resources()
+        try:
+            metrics.start_metrics_server(8082)
+        except Exception:
+            pass
         print(f"🔌 [Storage] Connecting to NATS: {Config.NATS_URL}")
         try:
             self.nc = await nats.connect(Config.NATS_URL)
             self.js = self.nc.jetstream()
-
+            try:
+                metrics.set_health(nats_ok=True)
+            except Exception:
+                pass
+            async def _buf_reporter():
+                while True:
+                    try:
+                        metrics.storage_buffer_depth.set(len(self._buffer))
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+            asyncio.create_task(_buf_reporter())
             print("🚀 Storage Worker started, listening to 'asr.output.archive'...")
 
             await self.js.subscribe(

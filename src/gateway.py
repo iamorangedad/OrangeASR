@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import nats
 from src.config import Config
 from src.logger import setup_logger
+from src import metrics
 
 logger = setup_logger("gateway")
 
@@ -128,11 +129,20 @@ class ConnectionManager:
             "ws": websocket,
             "history": "",
         }
+        try:
+            metrics.gateway_ws_connections.inc()
+            metrics.set_health(nats_ok=server_state.get("js") is not None)
+        except Exception:
+            pass
         logger.info(f"✅ WebSocket session accepted.", extra={"session_id": session_id})
 
     def disconnect(self, session_id: str):
         if session_id in self.active_sessions:
             del self.active_sessions[session_id]
+            try:
+                metrics.gateway_ws_connections.dec()
+            except Exception:
+                pass
             logger.info(
                 f"🔌 WebSocket session removed.", extra={"session_id": session_id}
             )
@@ -212,6 +222,10 @@ async def lifespan(app: FastAPI):
         server_state["nc"] = await nats.connect(Config.NATS_URL)
         server_state["js"] = server_state["nc"].jetstream()
         print("✅ [Gateway] NATS Connected successfully")
+        try:
+            metrics.set_health(nats_ok=True)
+        except Exception:
+            pass
         await server_state["js"].subscribe(
             "asr.output.transcript",
             cb=handle_asr_result,
@@ -225,6 +239,10 @@ async def lifespan(app: FastAPI):
         print("✅ [Gateway] Listening for 'asr.output'...")
     except Exception as e:
         print(f"❌ [Gateway] NATS Connection Failed: {e}")
+        try:
+            metrics.set_health(nats_ok=False)
+        except Exception:
+            pass
     yield
     print("🛑 [Gateway] Shutting down...")
     if server_state["nc"]:
@@ -232,6 +250,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/healthz")
+async def healthz():
+    ok = server_state.get("js") is not None
+    return {"status": "ok" if ok else "degraded", "nats": ok}
+
+@app.get("/ready")
+async def ready():
+    ok = server_state.get("js") is not None
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=200 if ok else 503, content={"ready": ok, "nats": ok})
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    data, ctype = metrics.metrics_content()
+    from fastapi.responses import Response
+    return Response(content=data, media_type=ctype)
 
 
 @app.websocket("/ws/realtime")
@@ -258,10 +294,18 @@ async def websocket_endpoint(websocket: WebSocket):
             for chunk in chunks:
                 if not bucket.consume():
                     pending += 1
+                    try:
+                        metrics.gateway_backpressure_total.labels(type="busy").inc()
+                    except Exception:
+                        pass
                     await manager.send_busy(session_id, pending)
                     logger.warning(f"⏳ Rate limited, busy sent", extra={"session_id": session_id})
                     continue
                 if pending >= max_pending:
+                    try:
+                        metrics.gateway_backpressure_total.labels(type="backpressure").inc()
+                    except Exception:
+                        pass
                     await manager.send_backpressure(session_id, pending)
                     logger.warning(f"⚠️ Backpressure pending={pending}", extra={"session_id": session_id})
                     pending = max(0, pending - 1)
@@ -273,6 +317,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if server_state["js"] is None:
                         logger.error("❌ NATS JetStream is not available!", extra={"session_id": session_id})
                         continue
+                    t0 = time.time()
                     if use_binary:
                         headers = {
                             "req_id": req_id,
@@ -299,6 +344,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             server_state["js"].publish("asr.input", json.dumps(payload).encode()),
                             timeout=2.0,
                         )
+                    try:
+                        metrics.nats_publish_latency.observe(time.time() - t0)
+                    except Exception:
+                        pass
                     pending = max(0, pending - 1) if pending > 0 else 0
                     logger.info(
                         f"🚀 Published Audio Chunk ({len(chunk)} bytes) to NATS ack={bool(ack)}",

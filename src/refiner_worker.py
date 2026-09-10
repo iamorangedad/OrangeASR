@@ -12,6 +12,7 @@ except ImportError:
 from src.config import Config
 from src.logger import setup_logger
 from src.refiner import ASRRefiner
+from src import metrics
 
 logger = setup_logger("refiner-worker")
 
@@ -177,11 +178,27 @@ class RefinerWorker:
 
     async def start(self):
         self.init_resources()
+        try:
+            metrics.start_metrics_server(8083)
+        except Exception:
+            pass
 
         print(f"🔌 [Refiner] Connecting to NATS: {Config.NATS_URL}")
         try:
             self.nc = await nats.connect(Config.NATS_URL)
             self.js = self.nc.jetstream()
+            try:
+                metrics.set_health(nats_ok=True)
+            except Exception:
+                pass
+            async def _refiner_reporter():
+                while True:
+                    try:
+                        metrics.refiner_queue_depth.set(sum(len(v) for v in self.session_buffers.values()))
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+            asyncio.create_task(_refiner_reporter())
 
             print("🚀 Refiner Worker started! Listening to 'asr.output.transcript'...")
 

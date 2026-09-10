@@ -8,6 +8,12 @@ except ImportError:
     httpx = None
     HAS_HTTPX = False
 import requests
+try:
+    from src import metrics
+    HAS_METRICS = True
+except Exception:
+    HAS_METRICS = False
+    metrics = None
 
 
 class ASRRefiner:
@@ -79,6 +85,7 @@ class ASRRefiner:
             "options": {"temperature": 0, "num_predict": 256, "top_k": 1},
         }
         last_err = None
+        t0 = time.time()
         for attempt in range(3):
             try:
                 if HAS_HTTPX:
@@ -98,6 +105,11 @@ class ASRRefiner:
                     model_output = full_response.get("thinking", "").strip()
                 result = json.loads(model_output)
                 self._record_success()
+                if HAS_METRICS and metrics is not None:
+                    try:
+                        metrics.llm_latency.observe(time.time() - t0)
+                    except Exception:
+                        pass
                 return result
             except Exception as e:
                 last_err = e
@@ -105,6 +117,11 @@ class ASRRefiner:
                     await asyncio.sleep(0.5 * (2 ** attempt))
                     continue
                 self._record_failure()
+                if HAS_METRICS and metrics is not None:
+                    try:
+                        metrics.llm_latency.observe(time.time() - t0)
+                    except Exception:
+                        pass
                 raise last_err
 
     def refine(self, segments):

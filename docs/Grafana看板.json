@@ -1,0 +1,55 @@
+{
+  "title": "OrangeASR Perf",
+  "uid": "orangeasr-perf",
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Gateway WS Connections",
+      "type": "stat",
+      "targets": [{"expr": "gateway_ws_connections", "refId": "A"}]
+    },
+    {
+      "title": "NATS Publish Latency p95",
+      "type": "graph",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(nats_publish_latency_seconds_bucket[5m]))", "refId": "A"}]
+    },
+    {
+      "title": "ASR Inference p95",
+      "type": "graph",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(worker_inference_seconds_bucket[5m]))", "refId": "A"}]
+    },
+    {
+      "title": "Worker Queue Depth",
+      "type": "graph",
+      "targets": [{"expr": "worker_queue_depth", "refId": "A"}]
+    },
+    {
+      "title": "S3 Upload p95",
+      "type": "graph",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(s3_upload_seconds_bucket[5m]))", "refId": "A"}]
+    },
+    {
+      "title": "LLM Latency p95",
+      "type": "graph",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(llm_latency_seconds_bucket[5m]))", "refId": "A"}]
+    },
+    {
+      "title": "Refiner Queue Depth",
+      "type": "graph",
+      "targets": [{"expr": "refiner_queue_depth", "refId": "A"}]
+    },
+    {
+      "title": "Backpressure Rate",
+      "type": "graph",
+      "targets": [{"expr": "rate(gateway_backpressure_total[5m])", "refId": "A"}]
+    }
+  ],
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "alerting": {
+    "alerts": [
+      {"name": "NATS Pending High", "expr": "nats_consumer_pending > 100", "for": "2m"},
+      {"name": "Inference P95 High", "expr": "histogram_quantile(0.95, rate(worker_inference_seconds_bucket[5m])) > 2", "for": "2m"}
+    ]
+  }
+}

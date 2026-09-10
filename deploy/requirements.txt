@@ -13,3 +13,4 @@ webrtcvad
 httpx
 aioboto3
 motor
+prometheus_client

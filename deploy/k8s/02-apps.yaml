@@ -55,26 +55,49 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: gateway
-          image: flash-asr:1.2
-          imagePullPolicy: IfNotPresent
-          command: ["uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
-          env:
-            - name: PYTHONPATH
-              value: "/app"
-          ports:
-            - containerPort: 8000
-          envFrom:
-            - configMapRef:
-                name: asr-config
-          # dir for code which is convenient for dev
-          volumeMounts:
-            - mountPath: /app
-              name: code-volume
-      volumes:
-        - name: code-volume
-          hostPath:
-            path: /home/mac/OrangeASR
-            type: Directory
+           image: flash-asr:1.2
+           imagePullPolicy: IfNotPresent
+           command: ["uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+           env:
+             - name: PYTHONPATH
+               value: "/app"
+           ports:
+             - containerPort: 8000
+             - containerPort: 8080
+               name: metrics
+           envFrom:
+             - configMapRef:
+                 name: asr-config
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "128Mi"
+             limits:
+               cpu: "500m"
+               memory: "512Mi"
+           livenessProbe:
+             httpGet:
+               path: /healthz
+               port: 8000
+             initialDelaySeconds: 15
+             periodSeconds: 10
+             timeoutSeconds: 3
+             failureThreshold: 3
+           readinessProbe:
+             httpGet:
+               path: /ready
+               port: 8000
+             initialDelaySeconds: 5
+             periodSeconds: 5
+             timeoutSeconds: 3
+           volumeMounts:
+             - mountPath: /app
+               name: code-volume
+       volumes:
+         - name: code-volume
+           hostPath:
+             path: /home/mac/OrangeASR
+             type: Directory
 ---
 # --- gateway Service ---
 apiVersion: v1
@@ -111,23 +134,45 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: storage
-          image: flash-asr:1.2
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-m", "src.storage_worker"]
-          env:
-            - name: PYTHONPATH
-              value: "/app"
-          envFrom:
-            - configMapRef:
-                name: asr-config
-          volumeMounts:
-            - mountPath: /app
-              name: code-volume
-      volumes:
-        - name: code-volume
-          hostPath:
-            path: /home/mac/OrangeASR
-            type: Directory
+           image: flash-asr:1.2
+           imagePullPolicy: IfNotPresent
+           command: ["python", "-m", "src.storage_worker"]
+           env:
+             - name: PYTHONPATH
+               value: "/app"
+           ports:
+             - containerPort: 8082
+               name: metrics
+           envFrom:
+             - configMapRef:
+                 name: asr-config
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "128Mi"
+             limits:
+               cpu: "500m"
+               memory: "512Mi"
+           livenessProbe:
+             httpGet:
+               path: /healthz
+               port: 8082
+             initialDelaySeconds: 15
+             periodSeconds: 10
+           readinessProbe:
+             httpGet:
+               path: /ready
+               port: 8082
+             initialDelaySeconds: 5
+             periodSeconds: 5
+           volumeMounts:
+             - mountPath: /app
+               name: code-volume
+       volumes:
+         - name: code-volume
+           hostPath:
+             path: /home/mac/OrangeASR
+             type: Directory
 ---
 # --- asr worker Deployment ---
 apiVersion: apps/v1
@@ -149,30 +194,53 @@ spec:
       nodeName: ubuntu       
       containers:
         - name: worker
-          image: faster-whisper-cuda:1.2
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-m", "src.asr_worker"]          
-          env:
-            - name: PYTHONPATH
-              value: "/app"
-            - name: ASR_DEVICE
-              value: "cuda"
-            - name: ASR_COMPUTE_TYPE
-              value: "int8_float16"
-          envFrom:
-            - configMapRef:
-                name: asr-config      
-          resources:
-            limits:
-              nvidia.com/gpu: 1              
-          volumeMounts:
-            - mountPath: /app
-              name: code-volume
-      volumes:
-        - name: code-volume
-          hostPath:
-            path: /home/jetson/OrangeASR
-            type: Directory   
+           image: faster-whisper-cuda:1.2
+           imagePullPolicy: IfNotPresent
+           command: ["python", "-m", "src.asr_worker"]          
+           env:
+             - name: PYTHONPATH
+               value: "/app"
+             - name: ASR_DEVICE
+               value: "cuda"
+             - name: ASR_COMPUTE_TYPE
+               value: "int8_float16"
+           ports:
+             - containerPort: 8081
+               name: metrics
+           envFrom:
+             - configMapRef:
+                 name: asr-config      
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "512Mi"
+             limits:
+               cpu: "1000m"
+               memory: "2Gi"
+               nvidia.com/gpu: 1              
+           livenessProbe:
+             httpGet:
+               path: /healthz
+               port: 8081
+             initialDelaySeconds: 30
+             periodSeconds: 10
+             timeoutSeconds: 5
+             failureThreshold: 3
+           readinessProbe:
+             httpGet:
+               path: /ready
+               port: 8081
+             initialDelaySeconds: 10
+             periodSeconds: 5
+             timeoutSeconds: 3
+           volumeMounts:
+             - mountPath: /app
+               name: code-volume
+       volumes:
+         - name: code-volume
+           hostPath:
+             path: /home/jetson/OrangeASR
+             type: Directory
 ---
 # --- Refiner Worker Deployment ---
 apiVersion: apps/v1
@@ -194,23 +262,45 @@ spec:
       nodeName: raspberrypi
       containers:
         - name: refiner
-          image: flash-asr:1.2
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-m", "src.refiner_worker"]
-          env:
-            - name: PYTHONPATH
-              value: "/app"
-          envFrom:
-            - configMapRef:
-                name: asr-config
-          volumeMounts:
-            - mountPath: /app
-              name: code-volume
-      volumes:
-        - name: code-volume
-          hostPath:
-            path: /home/mac/OrangeASR
-            type: Directory
+           image: flash-asr:1.2
+           imagePullPolicy: IfNotPresent
+           command: ["python", "-m", "src.refiner_worker"]
+           env:
+             - name: PYTHONPATH
+               value: "/app"
+           ports:
+             - containerPort: 8083
+               name: metrics
+           envFrom:
+             - configMapRef:
+                 name: asr-config
+           resources:
+             requests:
+               cpu: "50m"
+               memory: "128Mi"
+             limits:
+               cpu: "300m"
+               memory: "512Mi"
+           livenessProbe:
+             httpGet:
+               path: /healthz
+               port: 8083
+             initialDelaySeconds: 15
+             periodSeconds: 10
+           readinessProbe:
+             httpGet:
+               path: /ready
+               port: 8083
+             initialDelaySeconds: 5
+             periodSeconds: 5
+           volumeMounts:
+             - mountPath: /app
+               name: code-volume
+       volumes:
+         - name: code-volume
+           hostPath:
+             path: /home/mac/OrangeASR
+             type: Directory
 
 ---
 # --- Web UI Deployment ---
