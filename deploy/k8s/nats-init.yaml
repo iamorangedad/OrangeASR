@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-init-script
+  namespace: asr-service
+data:
+  init.sh: |
+    #!/bin/sh
+    set -e
+    echo "⏳ 初始化 NATS JetStream Streams ..."
+    # 等待 NATS 就绪
+    for i in $(seq 1 30); do
+      if nats --server=nats.asr-service.svc.cluster.local:4222 server check > /dev/null 2>&1; then
+        break
+      fi
+      echo "等待 NATS ... $i/30"
+      sleep 2
+    done
+
+    # ASR_INPUT: Gateway → ASR Worker
+    nats stream add ASR_INPUT \
+      --server=nats.asr-service.svc.cluster.local:4222 \
+      --subjects="asr.input" \
+      --retention=limits \
+      --max-age=5m \
+      --max-bytes=512M \
+      --max-msgs=10000 \
+      --storage=file \
+      --replicas=1 \
+      --discard=old \
+      --dupe-window=30s \
+      --allow-rollup \
+      --deny-delete --deny-purge 2>/dev/null || \
+    nats stream update ASR_INPUT \
+      --server=nats.asr-service.svc.cluster.local:4222 \
+      --max-age=5m --max-bytes=512M --max-msgs=10000 2>/dev/null || true
+
+    # ASR_OUTPUT: ASR Worker → Gateway/Storage/Refiner
+    nats stream add ASR_OUTPUT \
+      --server=nats.asr-service.svc.cluster.local:4222 \
+      --subjects="asr.output, asr.output.transcript, asr.output.archive" \
+      --retention=limits \
+      --max-age=5m \
+      --max-bytes=512M \
+      --max-msgs=10000 \
+      --storage=file \
+      --replicas=1 \
+      --discard=old \
+      --dupe-window=30s \
+      --allow-rollup \
+      --deny-delete --deny-purge 2>/dev/null || \
+    nats stream update ASR_OUTPUT \
+      --server=nats.asr-service.svc.cluster.local:4222 \
+      --max-age=5m --max-bytes=512M --max-msgs=10000 2>/dev/null || true
+
+    echo "✅ Streams 就绪"
+    nats stream ls --server=nats.asr-service.svc.cluster.local:4222 || true
+    nats stream info ASR_INPUT --server=nats.asr-service.svc.cluster.local:4222 || true
+    nats stream info ASR_OUTPUT --server=nats.asr-service.svc.cluster.local:4222 || true
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nats-init
+  namespace: asr-service
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: nats-init
+          image: natsio/nats-box:latest
+          command: ["/bin/sh", "/scripts/init.sh"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: nats-init-script
+            defaultMode: 0755
