@@ -3,6 +3,12 @@ import json
 import time
 import nats
 from pymongo import MongoClient
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+    HAS_MOTOR = True
+except ImportError:
+    AsyncIOMotorClient = None
+    HAS_MOTOR = False
 from src.config import Config
 from src.logger import setup_logger
 from src.refiner import ASRRefiner
@@ -15,7 +21,9 @@ class RefinerWorker:
         self.nc = None
         self.js = None
         self.mongo_client = None
+        self.mongo_async_client = None
         self.collection = None
+        self.async_collection = None
         self.refiner = None
         self.session_buffers = {}
         self.session_timers = {}
@@ -40,6 +48,12 @@ class RefinerWorker:
             print("✅ [Refiner] MongoDB connected.")
         except Exception as e:
             print(f"❌ [Refiner] MongoDB connection failed: {e}")
+        if HAS_MOTOR:
+            try:
+                self.mongo_async_client = AsyncIOMotorClient(Config.MONGO_URI)
+                self.async_collection = self.mongo_async_client[Config.MONGO_DB]["refined_data"]
+            except Exception:
+                pass
 
     async def process_msg(self, msg):
         try:
@@ -78,28 +92,49 @@ class RefinerWorker:
             await msg.ack()
 
     def _reset_session_timer(self, session_id):
-        if session_id in self.session_timers:
-            self.session_timers[session_id].cancel()
-
-        loop = asyncio.get_running_loop()
-        self.session_timers[session_id] = loop.call_later(
-            Config.REFINE_BUFFER_TTL,
-            lambda: asyncio.ensure_future(self._refine_session(session_id)),
-        )
+        old = self.session_timers.get(session_id)
+        if old is not None:
+            try:
+                old.cancel()
+            except Exception:
+                pass
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        try:
+            handle = loop.call_later(
+                Config.REFINE_BUFFER_TTL,
+                lambda: asyncio.ensure_future(self._refine_session(session_id)),
+            )
+            self.session_timers[session_id] = handle
+        except RuntimeError as e:
+            logger.warning(f"call_later failed: {e}")
 
     async def _refine_session(self, session_id):
         if session_id not in self.session_buffers or not self.session_buffers[session_id]:
             return
 
         segments = self.session_buffers.pop(session_id, [])
-        if session_id in self.session_timers:
-            self.session_timers.pop(session_id, None).cancel()
+        handle = self.session_timers.pop(session_id, None)
+        if handle is not None:
+            try:
+                handle.cancel()
+            except Exception:
+                pass
 
         if len(segments) < 1:
             return
 
         try:
-            refined = self.refiner.refine(segments)
+            try:
+                refined = await self.refiner.arefine(segments)
+            except Exception as e:
+                if "arefine" in str(type(e)):
+                    loop = asyncio.get_running_loop()
+                    refined = await loop.run_in_executor(None, self.refiner.refine, segments)
+                else:
+                    raise
             logger.info(
                 f"✅ Refined session {session_id}: '{refined.get('corrected_text', '')}'",
                 extra={"session_id": session_id},
@@ -115,27 +150,30 @@ class RefinerWorker:
                 "corrected_text": segments[0]["transcribe_text"],
             }
 
-        if self.collection is not None:
-            doc = {
-                "session_id": session_id,
-                "audio_id": refined.get("audio_id", segments[0]["audio_id"]),
-                "original_text": refined.get("original_text", ""),
-                "corrected_text": refined.get("corrected_text", ""),
-                "segments": segments,
-                "model_used": Config.OLLAMA_MODEL,
-                "refined_at": time.time(),
-            }
-            try:
-                self.collection.insert_one(doc)
-                logger.info(
-                    f"✅ Saved refined data to DB",
-                    extra={"session_id": session_id},
-                )
-            except Exception as db_e:
-                logger.error(
-                    f"❌ MongoDB insert failed: {db_e}",
-                    extra={"session_id": session_id},
-                )
+        doc = {
+            "session_id": session_id,
+            "audio_id": refined.get("audio_id", segments[0]["audio_id"]),
+            "original_text": refined.get("original_text", ""),
+            "corrected_text": refined.get("corrected_text", ""),
+            "segments": segments,
+            "model_used": Config.OLLAMA_MODEL,
+            "refined_at": time.time(),
+        }
+        try:
+            if HAS_MOTOR and self.async_collection is not None:
+                await self.async_collection.insert_one(doc)
+            elif self.collection is not None:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, lambda: self.collection.insert_one(doc))
+            logger.info(
+                f"✅ Saved refined data to DB",
+                extra={"session_id": session_id},
+            )
+        except Exception as db_e:
+            logger.error(
+                f"❌ MongoDB insert failed: {db_e}",
+                extra={"session_id": session_id},
+            )
 
     async def start(self):
         self.init_resources()
@@ -145,18 +183,21 @@ class RefinerWorker:
             self.nc = await nats.connect(Config.NATS_URL)
             self.js = self.nc.jetstream()
 
-            try:
-                await self.js.add_stream(name="ASR_REFINER", subjects=["asr.output"])
-            except Exception:
-                pass
+            print("🚀 Refiner Worker started! Listening to 'asr.output.transcript'...")
 
-            print("🚀 Refiner Worker started! Listening to 'asr.output'...")
-
+            await self.js.subscribe(
+                "asr.output.transcript",
+                queue="refiner_workers",
+                cb=self.process_msg,
+                manual_ack=True,
+                durable="refiner-durable",
+            )
             await self.js.subscribe(
                 "asr.output",
                 queue="refiner_workers",
                 cb=self.process_msg,
                 manual_ack=True,
+                durable="refiner-durable-compat",
             )
 
             await asyncio.Future()
@@ -164,8 +205,13 @@ class RefinerWorker:
         except Exception as e:
             logger.critical(f"❌ Startup failed: {e}", exc_info=True)
         finally:
-            for timer in self.session_timers.values():
-                timer.cancel()
+            for timer in list(self.session_timers.values()):
+                try:
+                    timer.cancel()
+                except Exception:
+                    pass
+            if self.mongo_async_client:
+                self.mongo_async_client.close()
             if self.nc:
                 await self.nc.close()
 

@@ -10,3 +10,6 @@ websocket-client
 gradio
 requests
 webrtcvad
+httpx
+aioboto3
+motor

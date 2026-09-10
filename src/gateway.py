@@ -213,9 +213,14 @@ async def lifespan(app: FastAPI):
         server_state["js"] = server_state["nc"].jetstream()
         print("✅ [Gateway] NATS Connected successfully")
         await server_state["js"].subscribe(
-            "asr.output",
+            "asr.output.transcript",
             cb=handle_asr_result,
             durable="gateway_router",
+        )
+        await server_state["js"].subscribe(
+            "asr.output",
+            cb=handle_asr_result,
+            durable="gateway_router_compat",
         )
         print("✅ [Gateway] Listening for 'asr.output'...")
     except Exception as e:

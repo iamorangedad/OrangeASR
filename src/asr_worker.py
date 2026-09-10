@@ -121,18 +121,24 @@ class ASRWorker:
                         "latency": latency,
                     },
                 )
-                output_payload = {
+                transcript_payload = {
                     "req_id": req_id,
                     "session_id": session_id,
                     "text": new_text,
                     "latency": latency,
                     "timestamp": time.time(),
-                    "audio_b64": payload.get("audio_b64", base64.b64encode(audio_bytes).decode() if audio_bytes else ""),
                 }
                 try:
-                    await self.js.publish("asr.output", json.dumps(output_payload).encode())
+                    await self.js.publish("asr.output.transcript", json.dumps(transcript_payload).encode())
+                    await self.js.publish("asr.output", json.dumps(transcript_payload).encode())
                 except Exception as e:
-                    logger.error(f"Publish asr.output failed: {e}", extra={"req_id": req_id})
+                    logger.error(f"Publish transcript failed: {e}", extra={"req_id": req_id})
+                if audio_bytes:
+                    try:
+                        archive_payload = {**transcript_payload, "audio_b64": base64.b64encode(audio_bytes).decode()}
+                        await self.js.publish("asr.output.archive", json.dumps(archive_payload).encode())
+                    except Exception as e:
+                        logger.warning(f"Publish archive failed: {e}", extra={"req_id": req_id})
             else:
                 logger.warning(
                     f"🚫 No Result (Silence or Unclear)", extra={"req_id": req_id}
@@ -229,10 +235,6 @@ class ASRWorker:
         try:
             self.nc = await nats.connect(Config.NATS_URL)
             self.js = self.nc.jetstream()
-            try:
-                await self.js.add_stream(name="ASR_INPUT", subjects=["asr.input"])
-            except Exception:
-                pass
             asyncio.create_task(self.batch_loop())
             await self.js.subscribe(
                 "asr.input", queue="asr_workers", cb=self.process_msg, manual_ack=True
